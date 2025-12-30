@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 	"io"
+	"time"
 )
 
 type Server struct {
@@ -60,6 +61,9 @@ func (this *Server) Handler(conn net.Conn) {
 	//用户上线,将用户加入到onlineMap中
 	user.Online()
 
+	//监听用户是否活跃的channel
+	isLive := make(chan bool)
+
 	//接收客户端发送的消息
 	go func() {
 		buf := make([]byte, 4096)
@@ -80,6 +84,9 @@ func (this *Server) Handler(conn net.Conn) {
 
 			//用户针对msg进行消息处理(将得到的消息进行广播)
 			user.DoMessage(msg)
+
+			//用户的任意消息，代表当前用户是一个活跃的
+			isLive <- true
 		}
 	}()
 	
@@ -87,7 +94,31 @@ func (this *Server) Handler(conn net.Conn) {
 	//当前handler阻塞
 	//里面没有任何 case，也就永远等不到可执行的分支
 	// 于是当前 goroutine 会 一直挂起，既不会退出，也不会让函数返回。
-	select {}
+	for {
+		// select里面的case在执行的时候本身就会把case打乱然后进行匹配 
+		// 第一次for循环进行select 会随机执行
+		// 初始化time.after 然后就等待
+		//  isLive要么有数据 要么定时器十秒钟结束 
+		// 一旦isLive有数据 本次select结束 进入第二次for循环再次select 初始化time.After 
+		// 然后继续等待两个管道是否有数据
+		select {
+		case <-isLive:
+			//当前用户是活跃的，应该重置定时器
+			//不做任何事情，为了激活select，更新下面的定时器
+		case <-time.After(time.Second * 10):
+			//已经超时
+			//将当前的User强制关闭
+			user.SendMsg("你被踢了")
+
+			//销毁用的资源
+			close(user.C)
+			conn.Close()
+
+			//退出当前handler
+			return //runtime.Goexit()
+		}
+	}
+
 
 }
 
