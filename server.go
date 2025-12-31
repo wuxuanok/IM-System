@@ -110,7 +110,7 @@ func (this *Server) Handler(conn net.Conn) {
 			//只要用户发消息，读 conn 的 goroutine 就会往 isLive 里丢一个值。
 			// 这个 case 被触发 → 什么业务都不做，但整个 select 会立即结束并进入下一次 for 循环。
 			// 结束 = 丢弃旧的 time.After 定时器，下一次循环会重新新建一个 10 秒定时器，相当于“续命”。
-		case <-time.After(time.Second * 10):
+		case <-time.After(time.Second * 300):
 			//作用：立即返回一个只读通道（<-chan time.Time），这个通道会在指定时长后收到一个 time.Time 值。
 			// 在 select 里作为 case 条件，表示“等待这个通道可读”。
 			// 因此 <-time.After(10 * time.Second) 就是“先等 10 秒，时间到了才能继续往下走”。
