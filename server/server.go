@@ -14,7 +14,13 @@ type Server struct {
 
 	//在线用户的列表
 	OnlineMap map[string]*User
-	mapLock   sync.RWMutex
+
+	// Go 标准库提供的读写互斥锁（read-write mutex），专门解决“读多写少”场景的并发安全问题。
+	//读锁：可同时被多个 goroutine 持有，彼此不阻塞；
+	// 写锁：只能有一个 goroutine 持有，且
+	// – 获取写锁前，必须等所有读锁、写锁都释放；
+	// – 写锁持有期间，新的读锁、写锁全部阻塞。
+	mapLock sync.RWMutex
 
 	//消息广播的channel
 	Message chan string
@@ -45,8 +51,8 @@ func (this *Server) ListenMessage() {
 
 		//将msg发送给全部的在线User
 		this.mapLock.Lock()
-		for _, cli := range this.OnlineMap {
-			cli.C <- msg
+		for _, client := range this.OnlineMap {
+			client.C <- msg
 		}
 		this.mapLock.Unlock()
 	}
@@ -56,7 +62,7 @@ func (this *Server) ListenMessage() {
 // 客户端（nc 命令） ←→ TCP 三次握手 ←→ 服务器（Go 程序）
 // conn.Read() 读的是谁？	客户端发来的数据
 // conn.Write() 写给谁？	客户端
-// conn.Close() 谁先挂电话？	服务器先挂，对方（客户端）会收到 RST 或 EOF
+// conn.Close() 谁先挂电话？ 服务器先挂，对方（客户端）会收到 RST 或 EOF
 func (this *Server) Handler(conn net.Conn) {
 	//...当前链接的业务
 	// fmt.Println("链接建立成功")
@@ -73,6 +79,7 @@ func (this *Server) Handler(conn net.Conn) {
 	go func() {
 		buf := make([]byte, 4096)
 		for {
+			//读客户端发来的数据
 			n, err := conn.Read(buf)
 			//EOF 属于 err == io.EOF 且 n == 0
 			if n == 0 {
@@ -143,6 +150,14 @@ func (this *Server) Handler(conn net.Conn) {
 // 启动服务器的接口
 func (this *Server) Start() {
 	//socket listen
+	//net.Listen : 在本地打开一个监听套接字（listening socket），把它绑定到 IP:PORT，
+	// 内核开始接收三次握手，把完成握手的连接放进已完成连接队列（completed connection queue
+
+	/*
+		net.Listener 接口：底层真正类型是 *net.TCPListener，它只干两件事：
+		– Accept() 从队列里摘一个连接；
+		– Close() 把监听套接字关掉，端口立即释放（SO_REUSEADDR 已默认启用）。
+	*/
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", this.Ip, this.Port))
 	if err != nil {
 		fmt.Println("net.Listen err:", err)
@@ -155,13 +170,23 @@ func (this *Server) Start() {
 	go this.ListenMessage()
 
 	for {
-		// accept
+		// accept	 Accept() 本身就会阻塞调用者，直到拿到新连接为止(阻塞当前goroutine)
 		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Println("listen accept err:", err)
 			continue
 		}
 		//do handler
+		//conn.Read / conn.Write（Handler 里会用到）
+		/*
+			Read(b []byte)
+				– 从内核接收缓冲区读数据，可能返回 n < len(b)，不代表对端关闭；
+				– 返回 io.EOF 表示对端优雅关闭（FIN）；
+				– 返回 read: connection reset by peer 表示对端发 RST。
+			Write(b []byte)
+				– 写操作只是把数据拷贝到内核发送缓冲区就返回；
+				– 若对端接收窗口为 0 且缓冲区满，默认阻塞（除非之前 SetWriteDeadline）。
+		*/
 		go this.Handler(conn)
 	}
 

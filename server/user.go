@@ -62,12 +62,12 @@ func (this *User) SendMsg(msg string) {
 func (this *User) DoMessage(msg string) {
 	if msg == "who" {
 		//查询当前在线用户都有哪些
-		this.server.mapLock.Lock()
+		this.server.mapLock.RLock()
 		for _, user := range this.server.OnlineMap {
 			onlineMsg := "[" + user.Addr + "]" + user.Name + ":" + "在线...\n"
 			this.SendMsg(onlineMsg)
 		}
-		this.server.mapLock.Unlock()
+		this.server.mapLock.RUnlock()
 
 	} else if len(msg) > 7 && msg[:7] == "rename|" {
 		//消息格式: rename|张三
@@ -122,11 +122,11 @@ func (this *User) DoMessage(msg string) {
 // 监听当前User channel的 方法，一旦有消息，直接发送给对应用户的电脑
 func (this *User) ListenMessage() {
 	//此处本来是单独的for死循环，然而超时强踢关掉C通道后，出现了CPU飙升问题，原因如下：
-	//<- 对已关闭通道的读操作永远不阻塞，行为分两种：
+	// <- 对已关闭通道的读操作永远不阻塞，行为分两种：
 	// 通道里还有残留数据 : 先把缓存数据逐个返回；此时 msg, ok := <-ch 的 ok == true，值就是元素本身。
 	// 缓存已空 : 立即返回零值（"" 对于 chan string），且 ok == false；
 	// 但 裸读 msg := <-ch 不会 panic，也不会阻塞，只是拿到的是零值，看起来“仍然成功执行”。
-	//在关闭后确实会继续执行，只是 msg 恒等于 ""，造成for 循环变成无限空转，CPU 就被吃光了。
+	// 在关闭后确实会继续执行，只是 msg 恒等于 ""，造成for 循环变成无限空转，CPU 就被吃光了。
 
 	/* 	for {
 		msg := <-this.C
@@ -146,13 +146,7 @@ func (this *User) ListenMessage() {
 
 	//逗号 ok 惯用法——显式判断	读到零值时看 ok 标志，为 false 就 break。
 
-	/*     for {
-	        msg, ok := <-this.C
-	        if !ok {
-				// 通道关闭且缓存已空，则跳出循环
-	            break
-	        }
-	        this.conn.Write([]byte(msg + "\n"))
-	    } */
+	/*
+	 */
 
 }
