@@ -1,4 +1,44 @@
 # 思：增加超时强踢功能后，在用户超时被踢后，CPU占有率飙升问题解析
+## 超时强踢代码
+```go
+for {
+
+		//所有 case 都 ready → 运行时随机挑一个执行；
+		//一旦某个 case 被执行，整个 select 就结束了。不需要、也不能写 break
+		//不会“继续执行下面的 case”；每个 case 是它自己的独立分支，执行完就退出 select
+		select {
+		case <-isLive:
+			//只要用户发消息，读 conn 的 goroutine 就会往 isLive 里丢一个值。
+			// 这个 case 被触发 → 什么业务都不做，但整个 select 会立即结束并进入下一次 for 循环。
+			// 结束 = 丢弃旧的 time.After 定时器，下一次循环会重新新建一个 10 秒定时器，相当于“续命”。
+		case <-time.After(time.Second * 300):
+			//作用：立即返回一个只读通道（<-chan time.Time），这个通道会在指定时长后收到一个 time.Time 值。
+			// 在 select 里作为 case 条件，表示“等待这个通道可读”。
+			// 因此 <-time.After(10 * time.Second) 就是“先等 10 秒，时间到了才能继续往下走”。
+
+			//将当前的User强制关闭
+			user.SendMsg("你被踢了")
+
+			//销毁用的资源
+
+			// 通道立即变为“已关闭”状态；后续任何 <-user.C 不再阻塞，而是返回零值 + ok=false。
+			// ListenMessage 里的 for msg := range user.C 会在缓存读完后自动跳出循环，goroutine 自然结束。
+			close(user.C)
+			//EOF = 正常结束，可以收拾桌子离场；
+			// RST = 异常掉线，需要记录日志、清理资源。
+			/*
+				网络连接 conn.Close()
+				TCP 发送 RST，对端 Read 返回 io.EOF（或 err != nil）。
+				读 goroutine：Read 得 EOF/err → 执行 Offline() → return 结束
+				写 goroutine：for改为range this.C后， 在通道关闭且缓存空后自动退出，不再 Write，故不会空转 CPU
+			*/
+			conn.Close()
+
+			//退出当前handler
+			return //runtime.Goexit()
+		}
+	}
+```
 ## 原来的用户监听消息方法
 ```go
 func (this *User) ListenMessage() {
