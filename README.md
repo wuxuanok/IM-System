@@ -112,3 +112,22 @@ for msg := range user.C {
 一个 goroutine 初始栈 2 KB，可动态扩容/缩容，10000 个在线用户 ≈ 20 MB 栈，远小于 10000 个并发线程的代价。
 当 channel 空时，range ch 会让 goroutine 挂起休眠，CPU 占用为 0；
 一旦连接断开，关闭 channel，goroutine 自动退出，栈被回收。
+
+# 思：为什么之前nc连接打印只要conn.Write就够，现在只是改成开一个client来连接，需要加一个io.copy
+## nc 本身就是“终端替身”
+它启动后会把标准输入、标准输出、标准错误统统 dup2 到 TCP 套接字上——
+远端发来的数据 → 内核缓冲区 → read(0) → 直接写到当前终端；
+你在键盘敲的东西 → write(1) → 直接送进套接字。
+也就是说，nc 内置了“收到啥就打印”的逻辑，不需要额外代码。
+## Go-client 是普通进程
+内核收到远端数据后，只把它放进这个进程的套接字接收缓冲区，不会自动帮你写到终端。
+如果你不去读，数据就静静地躺在那里，屏幕永远看不到。
+因此必须显式地开一个 goroutine，不断把 conn 里的内容搬出来，再写到 os.Stdout——这正是 io.Copy(os.Stdout, client.conn) 干的事：
+```go
+// 伪代码
+for {
+    n, _ := conn.Read(buf)   // 读 socket
+    os.Stdout.Write(buf[:n]) // 写终端
+}
+```
+io.Copy 把上面循环帮你一次写完，直到连接关闭返回 EOF 才退出。
